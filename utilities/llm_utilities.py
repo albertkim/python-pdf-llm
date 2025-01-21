@@ -1,7 +1,9 @@
 import os
+import asyncio
 from openai import AsyncOpenAI
 from typing import Literal
 from dotenv import load_dotenv
+from pdf_utilities import pdf_url_to_images
 
 load_dotenv()
 
@@ -53,3 +55,29 @@ async def get_llm_text_response(llm_provider: Literal["openai", "anthropic", "de
         messages=messages,
     )
     return response.choices[0].message.content
+
+async def get_llm_text_response_from_pdf(llm_provider: Literal["openai", "anthropic", "deepseek", "xai"], model: str, prompt: str, pdf_url: str, concurrent_requests: int = 5) -> list[str]:
+    pdf_images = await pdf_url_to_images(pdf_url)
+    if not pdf_images:
+        return []
+        
+    async def process_page(image: bytes) -> str:
+        return await get_llm_text_response(
+            llm_provider=llm_provider,
+            model=model, 
+            prompt=prompt,
+            image=image
+        )
+    
+    sem = asyncio.Semaphore(concurrent_requests)
+    
+    async def process_with_semaphore(image: bytes) -> str:
+        async with sem:
+            return await process_page(image)
+    
+    # Process all pages concurrently with semaphore
+    responses = await asyncio.gather(
+        *[process_with_semaphore(image) for image in pdf_images]
+    )
+    
+    return responses
